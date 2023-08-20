@@ -117,6 +117,10 @@ datSample = read.csv("AdditionalFile27SampleAnnotationExample55.csv")
 
 
 ## ------------------------------------- 새로 만든 코드
+
+library(dplyr)
+library(tidyverse)
+
 #datClock %>% colnames()
 datMethUsedNormalized %>% head()
 datSample %>% head()
@@ -141,21 +145,23 @@ x_matrix <- as.matrix(datSe[, -which(names(datSe) == 'Age')])
 y_vector <- datSe$Age
 
 
-# library(caret)
-# # 데이터를 훈련 데이터와 테스트 데이터로 나눔 (70% 훈련, 30% 테스트)
-# set.seed(123)  # 재현성을 위한 시드 설정
-# index <- createDataPartition(y_vector, p = 0.7, list = FALSE)
-# x_train <- x_matrix[index, ]
-# y_train <- y_vector[index]
-# x_test <- x_matrix[-index, ]
-# y_test <- y_vector[-index]
+library(caret)
+# 데이터를 훈련 데이터와 테스트 데이터로 나눔 (70% 훈련, 30% 테스트)
+set.seed(123)  # 재현성을 위한 시드 설정
+index <- createDataPartition(y_vector, p = 0.7, list = FALSE)
+x_train <- x_matrix[index, ]
+y_train <- y_vector[index]
+x_test <- x_matrix[-index, ]
+y_test <- y_vector[-index]
 
+
+## Elastic net, Ridge, Lasso
 library(glmnet)
 # use 10 fold cross validation to estimate the lambda parameter 
 # in the training data
 alpha = 0.5 # α=0은 ridge,α=1은 lasso
 #alpha=0.5는 Elastic Net 모델에서 L1 penalty와 L2 penalty를 반반씩 적용
-glmnet.Training.CV = cv.glmnet(x = x_matrix, y = y_vector, nfolds = 10, alpha = alpha, family = "gaussian")# The definition of the lambda parameter:
+glmnet.Training.CV = cv.glmnet(x = x_train, y = y_train, nfolds = 10, alpha = alpha, family = "gaussian")# The definition of the lambda parameter:
 plot(glmnet.Training.CV)
 lambda.glmnet.Training = glmnet.Training.CV$lambda.min # 오차가 제일 작은 람다
 #x축은 로그 스케일로 람다(lambda) 값의 경로가 나타납니다. 람다 값은 규제의 강도를 조절하는 파라미터로, 높은 람다 값은 모델의 복잡성을 줄이고 더 많은 특성을 선택하지 않게 합니다.
@@ -167,7 +173,7 @@ cv_results  <- list()
 lambda.glmnet.Training_list <- list()
 
 for (alpha in alphas) {
-  glmnet.Training.CV_list <- cv.glmnet(x = x_matrix, y = y_vector, nfolds = 10, alpha = alpha, family = "gaussian")
+  glmnet.Training.CV_list <- cv.glmnet(x = x_train, y = y_train, nfolds = 10, alpha = alpha, family = "gaussian")
   cv_results[[as.character(alpha)]] <- glmnet.Training.CV_list
   lambda.glmnet.Training_list[[as.character(alpha)]] <- glmnet.Training.CV_list$lambda.min
 }
@@ -181,18 +187,96 @@ for (i in 1:length(alphas)) {
 }
 
 
-
-
-
-
-
-
 # Fit the elastic net predictor to the training data
-glmnet.Training = glmnet(x = x_matrix, y = y_vector, family="gaussian", alpha=0.5, nlambda=100)
+glmnet.Training = glmnet(x = x_train, y = y_train, family="gaussian", alpha=0.5, nlambda=100)
 # Arrive at an estimate of of DNAmAge
 DNAmAgeBasedOnTraining=inverse.F(predict(glmnet.Training,datout,type="response",s=lambda.glmnet.Training))
 
 
+
+
+## Randomforest
+library(randomForest)
+library(ggplot2)
+# RandomForest 모델 학습
+#RandomForest 모델은 트리의 개수(ntree)와 트리의 최대 깊이(mtry) 등 여러 매개변수를 갖음
+# 경우의 수에 따른 그래프 그리기
+ntree_values <- seq(100, 1000, by = 100)  # 트리 개수의 경우의 수
+mtry_values <- seq(1, ncol(x_train), by = 1)  # mtry의 경우의 수
+
+results <- matrix(NA, nrow = length(ntree_values), ncol = length(mtry_values))
+
+# ! 엄청 오래걸림 주의 !
+for (i in 1:length(ntree_values)) {
+  for (j in 1:length(mtry_values)) {
+    ntree <- ntree_values[i]
+    mtry <- mtry_values[j]
+    rf_model <- randomForest(x = x_train, y = y_train, ntree = ntree, mtry = mtry)
+    rf_predictions <- predict(rf_model, newdata = x_test)
+    mse <- mean((rf_predictions - y_test)^2)
+    results[i, j] <- mse
+    print(paste(i, '/', length(ntree_values), j, '/', length(mtry_values)))
+  }
+}
+
+# 결과를 그래프로 나타내기
+results_df <- as.data.frame(results)
+colnames(results_df) <- mtry_values
+rownames(results_df) <- ntree_values
+
+# 그래프 그리기
+ggplot(results_df, aes(x = as.factor(colnames(results_df)), y = as.factor(rownames(results_df)), fill = as.vector(results_df))) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "blue") +
+  labs(title = "RandomForest Mean Squared Error by ntree and mtry",
+       x = "mtry", y = "ntree") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+## Xgboost
+library(xgboost)
+#ntree와 max_depth 매개변수를 변경
+# 경우의 수에 따른 그래프 그리기
+ntree_values2 <- seq(100, 1000, by = 100)  # 트리 개수의 경우의 수
+max_depth_values <- seq(1, 10, by = 1)  # max_depth의 경우의 수
+
+results2 <- expand.grid(ntree_values = ntree_values, max_depth_values = max_depth_values)
+results2$MSE <- NA
+
+for (i in 1:nrow(results2)) {
+  ntree2 <- results2$ntree_values[i]
+  max_depth <- results2$max_depth_values[i]
+  xgb_model <- xgboost(data = x_train, label = y_train, nrounds = ntree2, max_depth = max_depth, objective = "reg:squarederror")
+  xgb_predictions <- predict(xgb_model, newdata = x_test)
+  mse2 <- mean((xgb_predictions - y_test)^2)
+  results2$MSE[i] <- mse2
+  print(paste(i, '/', nrow(results2)))
+}
+
+# factor화
+results2$ntree_values2 <- as.factor(results2$ntree_values2)
+results2$max_depth_values <- as.factor(results2$max_depth_values)
+
+# 결과를 그래프로 나타내기
+ggplot(results2, aes(x = max_depth_values, y = ntree_values2, fill = MSE)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "blue") +
+  labs(title = "XGBoost Mean Squared Error by ntree and max_depth",
+       x = "max_depth", y = "ntree") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+# x 축 (max_depth): 트리의 최대 깊이(max_depth)에 해당합니다. 이 값은 트리의 깊이가 얼마나 깊어지는지를 나타내며, 너무 낮으면 모델이 복잡성을 캡처하지 못하고, 너무 높으면 과적합의 위험이 있습니다.
+# 
+# y 축 (ntree): 트리의 개수(ntree)에 해당합니다. 이 값은 앙상블 내에서 생성되는 개별 의사결정 트리의 개수입니다.
+# 
+# 색상: 색상은 평균 제곱 오차(MSE)를 나타내며, 색상이 진할수록 낮은 MSE 값을 가짐을 의미합니다. 즉, 색상이 진할수록 모델의 예측 성능이 좋은 것을 나타냅니다.
+# 그래프를 해석하는 과정에서 주목해야 할 점은:
+#   
+#   최적값 탐색: 그래프에서 MSE가 가장 낮은 영역을 찾아봅니다. 보통 색상이 진한 부분이 그 중요한 영역일 수 있습니다.
+# 과적합 확인: max_depth가 너무 높아질수록 MSE가 증가하는 부분이 있을 수 있습니다. 이는 모델이 훈련 데이터에 과적합되는 경향을 보이는 것을 나타낼 수 있습니다.
+# 트리의 개수와 성능: ntree 값에 따라서도 성능이 변하는 경향을 확인할 수 있습니다. 초기에 트리 개수가 적을 때는 성능이 낮을 수 있으나, 일정 수준 이상에서는 큰 성능 향상이 없거나 증가할 수 있습니다.
+# 상호작용: max_depth와 ntree가 서로 어떻게 상호작용하는지 관찰합니다. 예를 들어, 더 큰 max_depth 값이 주어졌을 때 ntree 값이 어떤 영향을 미치는지 확인합니다.
 #--------------------------
 
 DNAmAge = datout$DNAmAge
