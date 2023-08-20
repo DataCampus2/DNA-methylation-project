@@ -233,6 +233,34 @@ ggplot(results_df, aes(x = as.factor(colnames(results_df)), y = as.factor(rownam
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
+best_mse <- Inf
+best_ntree <- NULL
+best_mtry <- NULL
+
+for (ntree in ntree_values) {
+  for (mtry in mtry_values) {
+    rf_model <- randomForest(x = x_train, y = y_train, ntree = ntree, mtry = mtry)
+    rf_predictions <- predict(rf_model, newdata = x_test)
+    mse <- mean((rf_predictions - y_test)^2)
+    
+    if (mse < best_mse) {
+      best_mse <- mse
+      best_ntree <- ntree
+      best_mtry <- mtry
+    }
+    
+    print(paste("ntree:", ntree, "mtry:", mtry, "MSE:", mse))
+  }
+}
+
+cat("Best ntree:", best_ntree, "\n")
+cat("Best mtry:", best_mtry, "\n")
+cat("Best MSE:", best_mse, "\n")
+
+
+
+
+
 
 ## Xgboost
 library(xgboost)
@@ -244,15 +272,27 @@ max_depth_values <- seq(1, 10, by = 1)  # max_depth의 경우의 수
 results2 <- expand.grid(ntree_values = ntree_values, max_depth_values = max_depth_values)
 results2$MSE <- NA
 
+best_mse2 <- Inf
+best_ntree2 <- NULL
+best_max_depth <- NULL
+
 for (i in 1:nrow(results2)) {
-  ntree2 <- results2$ntree_values[i]
+  ntree2 <- results2$ntree_values2[i]
   max_depth <- results2$max_depth_values[i]
   xgb_model <- xgboost(data = x_train, label = y_train, nrounds = ntree2, max_depth = max_depth, objective = "reg:squarederror")
   xgb_predictions <- predict(xgb_model, newdata = x_test)
   mse2 <- mean((xgb_predictions - y_test)^2)
   results2$MSE[i] <- mse2
+  
+  if (mse2 < best_mse) {
+    best_mse2 <- mse2
+    best_ntree2 <- ntree2
+    best_max_depth <- max_depth
+  }
+  
   print(paste(i, '/', nrow(results2)))
 }
+
 
 # factor화
 results2$ntree_values2 <- as.factor(results2$ntree_values2)
